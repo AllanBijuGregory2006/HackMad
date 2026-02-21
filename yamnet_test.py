@@ -28,7 +28,7 @@ def ensure_sample_rate(original_sample_rate, waveform, desired_sample_rate=16000
 
 # 4. Load and process the audio file
 # Make sure this file exists in the same folder as this script!
-audio_file = 'test_audio.wav' 
+audio_file = 'alarm.wav' 
 
 try:
     print(f"Loading '{audio_file}'...")

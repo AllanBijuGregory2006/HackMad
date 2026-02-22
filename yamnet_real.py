@@ -42,34 +42,46 @@ def audio_callback(indata, frames, time_info, status):
         print(status)
     
     # --- DSP STAGE ---
-    # Convert hardware buffer to float32
-    waveform = np.squeeze(indata).astype(np.float32)
+    raw_waveform = np.squeeze(indata).astype(np.float32)
+    filtered_waveform = bandpass_filter(raw_waveform).astype(np.float32)
+
+    # FAST FOURIER TRANSFORM (FFT)
+    fft_spectrum = np.abs(np.fft.rfft(raw_waveform))
     
-    # Apply the Bandpass Filter to aggressively mute human speech
-    waveform = bandpass_filter(waveform).astype(np.float32)
+    # FIX: The second argument 'd' must be the time per sample (1 / sample_rate)
+    fft_freqs = np.fft.rfftfreq(len(raw_waveform), d=1.0/16000.0)
+    
+    # Ignore DC offset (0 Hz) and room hum (< 100 Hz)
+    valid_indices = np.where(fft_freqs > 100)[0]
+    peak_freq_index = valid_indices[np.argmax(fft_spectrum[valid_indices])]
+    peak_freq = fft_freqs[peak_freq_index]
 
     # --- AI STAGE ---
-    scores, embeddings, spectrogram = yamnet_model(waveform)
+    scores, embeddings, spectrogram = yamnet_model(filtered_waveform)
     mean_scores = tf.reduce_mean(scores, axis=0).numpy()
     
-    # Find the "Winner" (this should no longer say "Speech" very often!)
     top_class_index = np.argmax(mean_scores)
     main_prediction = class_names[top_class_index]
-    main_conf = mean_scores[top_class_index]
-
-    # Target Detection
+    
     target_idx = class_names.index(TARGET_SOUND)
     current_target_score = mean_scores[target_idx]
     
     score_buffer.append(current_target_score)
     avg_score = sum(score_buffer) / len(score_buffer)
 
-    print(f"Loudest Filtered: {main_prediction:12s} ({main_conf:.2f}) | {TARGET_SOUND} Current: {current_target_score:.2f} | Avg: {avg_score:.2f}    ", end='\r')
+    # UI Feedback
+    print(f"Winner: {main_prediction:12s} | Alarm Conf: {avg_score:.2f} | Peak: {peak_freq:.0f} Hz    ", end='\r')
 
-    # Trigger Logic
+    # --- TRIGGER LOGIC WITH REFINED FFT VETO ---
     if len(score_buffer) == buffer_size and avg_score > DETECTION_THRESHOLD:
-        alarm_protocol(avg_score)
-        score_buffer.clear()
+        
+        # VETO GATE: Human voices peak < 500 Hz. Alarms peak > 800 Hz.
+        if peak_freq > 2000: 
+            alarm_protocol(avg_score)
+            score_buffer.clear()
+        else:
+            # Veto applied. 
+            pass
 
 # 5. MONITORING LOOP
 block_duration = 0.5 
